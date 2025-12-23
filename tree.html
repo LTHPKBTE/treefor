@@ -344,7 +344,7 @@ const CONFIG = {
         innerParticleCount: 16000,  // 树内部发光粒子数量
         orbitParticleCount: 180    // 【修改】降低为文字所需的字符数量，每个字符由一个Sprite构成
     },
-    orbitText: "今 天 快 乐  LiK  ", // 【新增】自定义环绕文字
+    orbitText: "今 天 快 乐", // 【新增】自定义环绕文字
     camera: { z: 50 },
     preload: {
 		autoScanLocal: false, // 关闭之前的自动扫描
@@ -404,6 +404,50 @@ const COLOR_THEMES = {
         ribbonEmissive: 0x554400,
         name: 'PURPLE'
     }
+};
+
+// 新增：绿色和蓝色主题
+COLOR_THEMES.GREEN = {
+    primary: 0x2ecc71,        // 主绿色（明亮）
+    secondary: 0x117a3a,      // 深绿色
+    emissive: 0x083014,
+    nebula: 0x8ef5b6,
+    star: 0xdfffe6,
+    starEmissive: 0x66ff88,
+    giftBox: 0x2e8b57,        // 礼物盒为绿色
+    giftBoxEmissive: 0x163d22,
+    ribbon: 0xffd700,         // 金色丝带
+    ribbonEmissive: 0x554400,
+    name: 'GREEN'
+};
+
+COLOR_THEMES.BLUE = {
+    primary: 0x4da6ff,        // 主蓝色（亮）
+    secondary: 0x0066cc,      // 深蓝
+    emissive: 0x001228,
+    nebula: 0x9fd9ff,
+    star: 0xddeeff,
+    starEmissive: 0x66b3ff,
+    giftBox: 0x1e90ff,        // 礼物盒为道奇蓝
+    giftBoxEmissive: 0x082a5a,
+    ribbon: 0xffffff,         // 白色丝带
+    ribbonEmissive: 0x444455,
+    name: 'BLUE'
+};
+
+// 新增：橙色主题
+COLOR_THEMES.ORANGE = {
+    primary: 0xff8c42,        // 明亮橙色
+    secondary: 0xd35400,      // 深橙
+    emissive: 0x2a1200,
+    nebula: 0xffc891,
+    star: 0xfff2e6,
+    starEmissive: 0xffa84d,
+    giftBox: 0xff7f50,        // 珊瑚橙礼物盒
+    giftBoxEmissive: 0x5a2f1a,
+    ribbon: 0x8b0000,         // 深红色丝带
+    ribbonEmissive: 0x330000,
+    name: 'ORANGE'
 };
 
 // 音乐相关
@@ -643,7 +687,7 @@ function setupTouchAndClick() {
         }
     });
     // 双击切换颜色主题
-    const themeOrder = ['GOLD', 'PINK', 'PURPLE'];
+    const themeOrder = ['GOLD', 'PINK', 'PURPLE', 'GREEN', 'BLUE', 'ORANGE'];
     let lastTap = 0;
     container.addEventListener('touchend', (e) => {
         const currentTime = new Date().getTime();
@@ -1110,7 +1154,7 @@ function updateOrbitRibbon(dt) {
 class Particle {
     constructor(mesh, type, isDust = false) {
         this.mesh = mesh; this.type = type; this.isDust = isDust;
-        this.posTree = new THREE.Vector3(); this.posScatter = new THREE.Vector3();
+        this.posTree = new THREE.Vector3(); this.posScatter = new THREE.Vector3(); this.posStar = new THREE.Vector3();
         this.baseScale = mesh.scale.x; 
         const speedMult = (type === 'PHOTO') ? 0.3 : 2.0;
         this.spinSpeed = new THREE.Vector3((Math.random()-0.5)*speedMult, (Math.random()-0.5)*speedMult, (Math.random()-0.5)*speedMult);
@@ -1147,6 +1191,7 @@ class Particle {
     }
     update(dt, mode, focusTargetMesh) {
         let target = (mode === 'SCATTER') ? this.posScatter : this.posTree;
+        if (mode === 'STAR') target = this.posStar;
         if (mode === 'FOCUS') {
             if (this.mesh === focusTargetMesh) {
                 // 固定在画面中央附近，加上随机偏移
@@ -1533,6 +1578,19 @@ function processGestures(result) {
         
         if (debugInfo) debugInfo.innerText = `Gesture: ${STATE.mode} | Fingers: ${fingerCount}`;
         
+        // V 手势检测：食指与中指伸出，其余手指收起，且两指之间有一定分离
+        const indexExtended = isExtended(lm[8], lm[5]);
+        const middleExtended = isExtended(lm[12], lm[9]);
+        const ringExtended = isExtended(lm[16], lm[13]);
+        const pinkyExtended = isExtended(lm[20], lm[17]);
+        const indexMiddleDist = Math.hypot(lm[8].x - lm[12].x, lm[8].y - lm[12].y);
+
+        const isVGesture = indexExtended && middleExtended && !ringExtended && !pinkyExtended && (indexMiddleDist > handSize * 0.6);
+
+        if (isVGesture) {
+            triggerStarShape();
+        }
+
         if (extensionRatio < 1.5) { STATE.mode = 'TREE'; STATE.focusTarget = null; }
         else if (pinchRatio < 0.35) {
             if (STATE.mode !== 'FOCUS') {
@@ -1620,6 +1678,60 @@ function setupEvents() {
             if(webcam) webcam.classList.toggle('ui-hidden');
         }
     });
+}
+
+// 计算所有粒子的星形目标位置（五角星轮廓）
+function computeStarTargets() {
+    const particles = particleSystem.filter(p => p.type !== 'PHOTO');
+    const N = particles.length;
+    if (N === 0) return;
+
+    // 五角星顶点定义（2D, 在 X-Y 平面），交替外/内半径
+    const points = [];
+    const spikes = 5;
+    const outerR = Math.max(6, Math.min(14, CONFIG.particles.treeRadius * 1.8));
+    const innerR = outerR * 0.45;
+    for (let i = 0; i < spikes * 2; i++) {
+        const r = (i % 2 === 0) ? outerR : innerR;
+        const angle = (Math.PI * 2 * i) / (spikes * 2) - Math.PI / 2;
+        points.push(new THREE.Vector2(Math.cos(angle) * r, Math.sin(angle) * r));
+    }
+
+    // 将粒子均匀分布在星形轮廓上
+    for (let i = 0; i < N; i++) {
+        const t = i / N;
+        const len = points.length;
+        const idxF = t * len;
+        const idx = Math.floor(idxF);
+        const frac = idxF - idx;
+        const p0 = points[idx % len];
+        const p1 = points[(idx + 1) % len];
+        const x = THREE.MathUtils.lerp(p0.x, p1.x, frac);
+        const y = THREE.MathUtils.lerp(p0.y, p1.y, frac);
+        const z = (Math.random() - 0.5) * 2.0; // 轻微深度
+        particles[i].posStar.set(x, y, z);
+    }
+}
+
+// 触发星形化（由 V 手势调用）
+let _starTimeout = null;
+function triggerStarShape() {
+    // 防抖：如果已经处于 STAR 模式或刚触发过则忽略
+    if (STATE.mode === 'STAR') return;
+    STATE.mode = 'STAR';
+    computeStarTargets();
+
+    // 小爆炸样式：先短暂 scatter 再聚合到星形（通过短时切换）
+    const prevMode = STATE.mode;
+    // 保证粒子有 posStar
+    particleSystem.forEach(p => { if (!p.posStar) p.posStar = new THREE.Vector3(); });
+
+    // 延时回到 TREE 模式（5秒）
+    if (_starTimeout) clearTimeout(_starTimeout);
+    _starTimeout = setTimeout(() => {
+        STATE.mode = 'TREE';
+        _starTimeout = null;
+    }, 5000);
 }
 
 function animate() {

@@ -403,6 +403,19 @@ const COLOR_THEMES = {
         ribbon: 0xFFD700,          // 金色彩带
         ribbonEmissive: 0x554400,
         name: 'PURPLE'
+    },
+	ICE: {
+        primary: 0xE0F7FF,        // 极浅蓝（近乎白色的冰晶色）
+        secondary: 0xFFFFFF,      // 纯白
+        emissive: 0x224466,       // 深邃的冷蓝色背景发光
+        nebula: 0xCCEEFF,         // 星云粒子：淡天蓝
+        star: 0xAFE4FF,           // 星星：冰蓝色
+        starEmissive: 0x4488FF,   // 星星发光：亮蓝
+        giftBox: 0x99BBCC,        // 礼物盒：银蓝色
+        giftBoxEmissive: 0x051a33, 
+        ribbon: 0xFFFFFF,         // 丝带：纯白
+        ribbonEmissive: 0x222222,
+        name: 'ICE'
     }
 };
 
@@ -474,7 +487,7 @@ let mouse = new THREE.Vector2();
 let bloomPass; // Bloom 通道引用
 
 // 可更新颜色的材质引用
-let goldMat, starMat, giftBoxMat, ribbonMat;
+let goldMat, starMat, giftBoxMat, ribbonMat, redMat;
 
 const debugInfo = document.getElementById('debug-info');
 const camBtn = document.getElementById('cam-btn');
@@ -531,6 +544,15 @@ window.setTheme = (themeName) => {
             colors[idx + 2] = color.b;
         }
         innerParticleSystem.geometry.attributes.color.needsUpdate = true;
+    }
+	// 如果是冰雪模式，背景调得更深邃
+    if (themeName === 'ICE') {
+        scene.background.setHex(0x010816);
+        scene.fog.color.setHex(0x010816);
+    } else {
+        // 其他模式恢复原有深蓝色
+        scene.background.setHex(0x050d1a);
+        scene.fog.color.setHex(0x050d1a);
     }
 };
 
@@ -687,7 +709,7 @@ function setupTouchAndClick() {
         }
     });
     // 双击切换颜色主题
-    const themeOrder = ['GOLD', 'PINK', 'PURPLE', 'GREEN', 'BLUE', 'ORANGE'];
+    const themeOrder = ['GOLD', 'PINK', 'PURPLE', 'GREEN', 'BLUE', 'ORANGE', 'ICE'];
     let lastTap = 0;
     container.addEventListener('touchend', (e) => {
         const currentTime = new Date().getTime();
@@ -1145,7 +1167,12 @@ function updateOrbitRibbon(dt) {
         
         // 随时间闪烁透明度，增强粒状感
         sprite.material.opacity = 0.2 + 0.3 * Math.sin(time * 1.5 + data.twinkle);
-        
+        // 在循环更新 sprite 的地方
+		// 确保冰雪模式下文字是纯白且高透明度
+		if (STATE.colorTheme === 'ICE') {
+			sprite.material.color.setHex(0xFFFFFF); 
+			sprite.material.opacity = 0.4 + 0.4 * Math.sin(time * 1.5 + data.twinkle);
+		}
         // 如果需要文字跟随主题变色，开启下面这行
         //sprite.material.color.lerp(themeColor, 0.05);
     });
@@ -1757,6 +1784,17 @@ function animate() {
         ribbonMat.emissive.setHex(theme.ribbonEmissive);
     }
     
+	// 添加这一段：让红色材质在冰雪模式下也变成淡蓝色/银色
+    if (typeof redMat !== 'undefined' && redMat) {
+        if (STATE.colorTheme === 'ICE') {
+            redMat.color.lerp(new THREE.Color(0xD0E8FF), 0.05); // 变成浅蓝色
+            redMat.emissive.lerp(new THREE.Color(0x112244), 0.05);
+        } else {
+            redMat.color.lerp(new THREE.Color(CONFIG.colors.accentRed), 0.05); // 恢复红色
+            redMat.emissive.lerp(new THREE.Color(0x330000), 0.05);
+        }
+    }
+    
     if (STATE.hand.detected) {
         if (STATE.mode === 'SCATTER') {
             const targetRotY = STATE.hand.x * Math.PI * 0.9; 
@@ -1785,7 +1823,9 @@ function animate() {
     
     // FOCUS 模式下降低 Bloom 强度，避免照片变白
     if (bloomPass) {
-        const targetStrength = (STATE.mode === 'FOCUS') ? 0.05 : 0.25;
+        // 如果是 ICE 模式，光晕增强到 0.45，否则保持 0.25
+        let baseStrength = (STATE.colorTheme === 'ICE') ? 0.45 : 0.25;
+        const targetStrength = (STATE.mode === 'FOCUS') ? 0.05 : baseStrength;
         bloomPass.strength += (targetStrength - bloomPass.strength) * 0.1;
     }
     

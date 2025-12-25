@@ -488,9 +488,9 @@ let snowSystem;
 let nebulaSystem;  // 金色星云粒子系统
 let nebulaPositions;  // 星云粒子位置数组
 let nebulaVelocities;  // 星云粒子速度数组
-let nebulaTargetPositions, nebulaCherryTargetPositions;  // 星云目标位置（围绕树）
+let nebulaTargetPositions, nebulaCherryTargetPositions, nebulaPlanetTargetPositions;  // 星云目标位置
 let innerParticleSystem;  // 树内部发光粒子系统
-let innerParticleTreePositions, innerParticleCherryPositions;
+let innerParticleTreePositions, innerParticleCherryPositions, innerParticlePlanetPositions;
 let orbitParticleSystem;  // 【修改】改为Group以容纳Sprite文字
 let orbitParticleData = [];  // 轨道粒子数据
 let raycaster = new THREE.Raycaster();
@@ -974,6 +974,8 @@ function updateGoldenNebula(dt) {
             let target;
             if (STATE.mode === 'CHERRY' && nebulaCherryTargetPositions) {
                 target = nebulaCherryTargetPositions[i];
+            } else if (STATE.mode === 'PLANET' && nebulaPlanetTargetPositions) {
+                target = nebulaPlanetTargetPositions[i];
             } else {
                 target = nebulaTargetPositions[i];
             }
@@ -1090,6 +1092,8 @@ function updateInnerParticles(dt) {
         let target;
         if (STATE.mode === 'CHERRY' && innerParticleCherryPositions) {
             target = innerParticleCherryPositions[i];
+        } else if (STATE.mode === 'PLANET' && innerParticlePlanetPositions) {
+            target = innerParticlePlanetPositions[i];
         } else if (innerParticleTreePositions) {
             target = innerParticleTreePositions[i];
         }
@@ -1205,6 +1209,15 @@ function updateOrbitRibbon(dt) {
             const r = 0.5 + (1 - t) * 1.5;
 
             targetPos.set(Math.cos(angle) * r, h, Math.sin(angle) * r);
+        } else if (STATE.mode === 'PLANET') {
+            const planetRadius = CONFIG.particles.treeRadius * 0.8;
+            const ringRadius = planetRadius * 1.8;
+            const angle = data.baseAngle + time * rotationSpeed * 0.5;
+            targetPos.set(
+                Math.cos(angle) * ringRadius,
+                Math.sin(time * 2 + data.twinkle) * 0.5, // 上下轻微浮动
+                Math.sin(angle) * ringRadius
+            );
         } else { // TREE mode
             const currentAngle = data.baseAngle + time * rotationSpeed;
             targetPos.set(
@@ -1232,7 +1245,7 @@ function updateOrbitRibbon(dt) {
 class Particle {
     constructor(mesh, type, isDust = false) {
         this.mesh = mesh; this.type = type; this.isDust = isDust;
-        this.posTree = new THREE.Vector3(); this.posScatter = new THREE.Vector3(); this.posStar = new THREE.Vector3(); this.posCherry = new THREE.Vector3();
+        this.posTree = new THREE.Vector3(); this.posScatter = new THREE.Vector3(); this.posStar = new THREE.Vector3(); this.posCherry = new THREE.Vector3(); this.posPlanet = new THREE.Vector3();
         this.baseScale = mesh.scale.x; 
         const speedMult = (type === 'PHOTO') ? 0.3 : 2.0;
         this.spinSpeed = new THREE.Vector3((Math.random()-0.5)*speedMult, (Math.random()-0.5)*speedMult, (Math.random()-0.5)*speedMult);
@@ -1275,6 +1288,12 @@ class Particle {
             target = this.posStar;
         } else if (mode === 'CHERRY') {
             target = this.posCherry;
+        } else if (mode === 'PLANET') {
+            if (this.type === 'PHOTO' || this.isDust) {
+                target = this.posScatter;
+            } else {
+                target = this.posPlanet;
+            }
         } else { // TREE
             target = this.posTree;
         }
@@ -1682,13 +1701,22 @@ function processGestures(result) {
         const isVGesture = indexExtended && middleExtended && !ringExtended && !pinkyExtended;
         const isIndexFingerGesture = indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
 
-        if (isVGesture) {
+        // 新增：星球手势（中间三指伸出）
+        const thumbTip = lm[4];
+        const indexMcp = lm[5];
+        const thumbOpenDist = Math.hypot(thumbTip.x - indexMcp.x, thumbTip.y - indexMcp.y);
+        const isThumbOpen = (thumbOpenDist / handSize) > 0.7; // 拇指是否张开的阈值
+        const isPlanetGesture = indexExtended && middleExtended && ringExtended && !pinkyExtended && !isThumbOpen;
+
+        if (isPlanetGesture) {
+            triggerPlanetShape();
+        } else if (isVGesture) {
             triggerStarShape();
         } else if (isIndexFingerGesture) {
             triggerCherryShape();
         }
 
-        if (extensionRatio < 1.5 && STATE.mode !== 'CHERRY' && STATE.mode !== 'STAR') { STATE.mode = 'TREE'; STATE.focusTarget = null; }
+        if (extensionRatio < 1.5 && STATE.mode !== 'CHERRY' && STATE.mode !== 'STAR' && STATE.mode !== 'PLANET') { STATE.mode = 'TREE'; STATE.focusTarget = null; }
         else if (pinchRatio < 0.35) {
             if (STATE.mode !== 'FOCUS') {
                 STATE.mode = 'FOCUS';
@@ -1889,6 +1917,69 @@ function triggerCherryShape() {
     _cherryTimeout = setTimeout(() => {
         STATE.mode = 'TREE';
         _cherryTimeout = null;
+    }, 8000); // 8秒后恢复
+}
+
+// --- 新增星球形状 ---
+function computePlanetTargets() {
+    const planetRadius = CONFIG.particles.treeRadius * 0.8;
+
+    // 1. 主装饰粒子 -> 球体表面
+    const particles = particleSystem.filter(p => p.type !== 'PHOTO' && p.type !== 'DUST');
+    particles.forEach(p => {
+        const phi = Math.acos(2 * Math.random() - 1);
+        const theta = Math.random() * Math.PI * 2;
+        const r = planetRadius * (0.95 + Math.random() * 0.1);
+        p.posPlanet.set(
+            r * Math.sin(phi) * Math.cos(theta),
+            r * Math.cos(phi),
+            r * Math.sin(phi) * Math.sin(theta)
+        );
+    });
+
+    // 2. 内部辉光粒子 -> 球体内
+    if (innerParticleSystem) {
+        innerParticlePlanetPositions = [];
+        for (let i = 0; i < CONFIG.particles.innerParticleCount; i++) {
+            const phi = Math.acos(2 * Math.random() - 1);
+            const theta = Math.random() * Math.PI * 2;
+            const r = planetRadius * Math.pow(Math.random(), 1.5); // 向核心更密集
+            innerParticlePlanetPositions.push(new THREE.Vector3(
+                r * Math.sin(phi) * Math.cos(theta),
+                r * Math.cos(phi),
+                r * Math.sin(phi) * Math.sin(theta)
+            ));
+        }
+    }
+
+    // 3. 星云粒子 -> 星环
+    if (nebulaSystem) {
+        nebulaPlanetTargetPositions = [];
+        const ringInnerRadius = planetRadius * 1.5;
+        const ringOuterRadius = planetRadius * 2.2;
+        for (let i = 0; i < CONFIG.particles.nebulaCount; i++) {
+            const radius = ringInnerRadius + Math.random() * (ringOuterRadius - ringInnerRadius);
+            const angle = Math.random() * Math.PI * 2;
+            const y = (Math.random() - 0.5) * 1.5; // 较薄的环
+            nebulaPlanetTargetPositions.push(new THREE.Vector3(
+                Math.cos(angle) * radius,
+                y,
+                Math.sin(angle) * radius
+            ));
+        }
+    }
+}
+
+let _planetTimeout = null;
+function triggerPlanetShape() {
+    if (STATE.mode === 'PLANET') return;
+    STATE.mode = 'PLANET';
+    computePlanetTargets();
+
+    if (_planetTimeout) clearTimeout(_planetTimeout);
+    _planetTimeout = setTimeout(() => {
+        STATE.mode = 'TREE';
+        _planetTimeout = null;
     }, 8000); // 8秒后恢复
 }
 
